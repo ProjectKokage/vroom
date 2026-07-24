@@ -1,0 +1,60 @@
+[project]
+name = "vroom"
+version = "0.1.0"
+description = "Generate VRM Animation files from text with HY-Motion 1.0"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.optional-dependencies]
+inference = [
+    "accelerate==0.30.1",
+    "einops==0.8.1",
+    "hf-xet==1.5.2",
+    "huggingface-hub==0.30.0",
+    "numpy>=1.24,<2",
+    "pyyaml==6.0.2",
+    "scipy>=1.10",
+    "safetensors==0.5.3",
+    "torch==2.5.1",
+    "torchdiffeq==0.2.5",
+    "transformers==4.53.3",
+]
+
+[project.scripts]
+vroom = "vroom.cli:main"
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.27,<2",
+    "pytest>=8.3,<9",
+    "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/README.md",
+    "/pyproject.toml",
+    "/src/vroom",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vroom"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "integration: requires downloaded HY-Motion and text-encoder checkpoints",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
