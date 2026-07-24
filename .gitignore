@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Generated motion and downloaded model weights
+output/
+*.vrma
+vendor/HY-Motion-1.0/ckpts/tencent/
+vendor/HY-Motion-1.0/ckpts/Qwen3-8B/
+vendor/HY-Motion-1.0/ckpts/clip-vit-large-patch14/
+
+# Local, redistribution-restricted fixtures
+/AliciaSolid_vrm-0.51.vrm
+/VRMA_MotionPack.zip
