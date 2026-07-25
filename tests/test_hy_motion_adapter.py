@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from vroom.errors import HyMotionError
 from vroom.hy_motion import (
+    HyMotionBackend,
+    HyMotionOptions,
     _configure_text_models,
     _move_text_conditioning,
     _use_device_random_generator,
@@ -76,3 +82,28 @@ def test_text_model_source_can_change_after_upstream_import(tmp_path, monkeypatc
     assert os.environ["USE_HF_MODELS"] == "1"
     assert loaded.LLM_ENCODER_LAYOUT["qwen3"]["module_path"] == "Qwen/Qwen3-8B"
     assert loaded.SENTENCE_EMB_LAYOUT["clipl"]["module_path"] == "openai/clip-vit-large-patch14"
+
+
+@pytest.mark.parametrize(
+    ("seeds", "message"),
+    [
+        ((), "between 1 and 16"),
+        (tuple(range(17)), "between 1 and 16"),
+        ((7, 7), "unique"),
+        ((-1,), "each seed"),
+        ((2**63,), "each seed"),
+    ],
+)
+def test_generate_variants_rejects_invalid_seed_batches_before_loading(
+    seeds: tuple[int, ...],
+    message: str,
+) -> None:
+    backend = HyMotionBackend(
+        HyMotionOptions(
+            model_path=Path("/missing/model"),
+            hy_motion_root=Path("/missing/runtime"),
+        )
+    )
+
+    with pytest.raises(HyMotionError, match=message):
+        backend.generate_variants("a person waves", duration=1.0, seeds=seeds)

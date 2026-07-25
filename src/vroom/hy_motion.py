@@ -8,7 +8,7 @@ import importlib
 import math
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -189,12 +189,37 @@ class HyMotionBackend:
         self.options = options
 
     def generate(self, prompt: str, *, duration: float, seed: int) -> MotionClip:
+        return self.generate_variants(
+            prompt,
+            duration=duration,
+            seeds=(seed,),
+        )[0]
+
+    def generate_variants(
+        self,
+        prompt: str,
+        *,
+        duration: float,
+        seeds: Sequence[int],
+    ) -> tuple[MotionClip, ...]:
+        """Generate bounded same-prompt seed variants with one model load."""
+
         if not prompt.strip():
             raise HyMotionError("prompt must not be empty")
         if not math.isfinite(duration) or duration <= 0:
             raise HyMotionError("duration must be a positive finite number")
-        if not isinstance(seed, int) or not 0 <= seed <= 2**63 - 1:
-            raise HyMotionError("seed must be an integer between 0 and 2^63-1")
+        normalized_seeds = tuple(seeds)
+        if not normalized_seeds or len(normalized_seeds) > 16:
+            raise HyMotionError("seeds must contain between 1 and 16 values")
+        if len(set(normalized_seeds)) != len(normalized_seeds):
+            raise HyMotionError("seeds must be unique")
+        if any(
+            not isinstance(seed, int) or not 0 <= seed <= 2**63 - 1
+            for seed in normalized_seeds
+        ):
+            raise HyMotionError(
+                "each seed must be an integer between 0 and 2^63-1"
+            )
         if not math.isfinite(self.options.cfg_scale) or self.options.cfg_scale <= 0:
             raise HyMotionError("CFG scale must be a positive finite number")
         if self.options.validation_steps is not None and self.options.validation_steps <= 0:
@@ -308,7 +333,9 @@ class HyMotionBackend:
                 )
                 encoder.to(torch_api.device(text_device_name)).eval()
                 with torch_api.inference_mode():
-                    text_vector, text_context, context_length = encoder.encode([prompt])
+                    text_vector, text_context, context_length = encoder.encode(
+                        [prompt] * len(normalized_seeds)
+                    )
                     hidden_state = _move_text_conditioning(
                         text_vector,
                         text_context,
@@ -322,7 +349,7 @@ class HyMotionBackend:
                 with torch_api.inference_mode():
                     output = pipeline.generate(
                         prompt,
-                        [seed],
+                        list(normalized_seeds),
                         duration,
                         cfg_scale=self.options.cfg_scale,
                         hidden_state_dict=hidden_state,
@@ -333,10 +360,14 @@ class HyMotionBackend:
         except Exception as exc:
             raise HyMotionError(f"HY-Motion inference failed: {exc}") from exc
 
-        return motion_from_hy_output(
-            output,
-            skeleton,
-            fps=fps,
-            name=f"HY-Motion: {prompt[:64]}",
-            ground=self.options.ground,
+        return tuple(
+            motion_from_hy_output(
+                output,
+                skeleton,
+                sample=index,
+                fps=fps,
+                name=f"HY-Motion seed {seed}: {prompt[:48]}",
+                ground=self.options.ground,
+            )
+            for index, seed in enumerate(normalized_seeds)
         )
