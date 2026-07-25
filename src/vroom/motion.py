@@ -6,6 +6,7 @@ import json
 import math
 import struct
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -177,13 +178,20 @@ class MotionClip:
     hips_translations: tuple[Vec3, ...]
     rotations: dict[str, tuple[Quat, ...]]
     name: str = "HY-Motion"
+    sample_times: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.fps) or self.fps <= 0:
             raise VrmaError("motion fps must be a positive finite number")
-        frame_count = len(self.hips_translations)
+        rotation_lengths = {len(values) for values in self.rotations.values()}
+        if len(rotation_lengths) > 1:
+            raise VrmaError("motion rotation tracks must have the same frame count")
+        rotation_frame_count = next(iter(rotation_lengths), 0)
+        frame_count = len(self.hips_translations) or rotation_frame_count
         if frame_count == 0:
             raise VrmaError("motion clip has no frames")
+        if self.hips_translations and rotation_frame_count not in {0, frame_count}:
+            raise VrmaError("motion translation and rotation tracks must have the same frame count")
         for frame, value in enumerate(self.hips_translations):
             _finite_vector(value, 3, f"hips translation at frame {frame}")
         for bone_name, values in self.rotations.items():
@@ -198,13 +206,27 @@ class MotionClip:
                     raise VrmaError(
                         f"{bone_name} rotation at frame {frame} is not normalized ({norm:.6f})"
                     )
+        if self.sample_times is not None:
+            if len(self.sample_times) != frame_count:
+                raise VrmaError(
+                    f"motion has {len(self.sample_times)} sample times for a "
+                    f"{frame_count}-frame clip"
+                )
+            if any(not math.isfinite(value) or value < 0 for value in self.sample_times):
+                raise VrmaError("motion sample times must be finite and non-negative")
+            if any(later <= earlier for earlier, later in pairwise(self.sample_times)):
+                raise VrmaError("motion sample times must be strictly increasing")
 
     @property
     def frame_count(self) -> int:
-        return len(self.hips_translations)
+        if self.hips_translations:
+            return len(self.hips_translations)
+        return len(next(iter(self.rotations.values())))
 
     @property
     def duration(self) -> float:
+        if self.sample_times is not None:
+            return self.sample_times[-1] - self.sample_times[0]
         return 0.0 if self.frame_count == 1 else (self.frame_count - 1) / self.fps
 
 

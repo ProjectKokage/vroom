@@ -38,7 +38,12 @@ class _BufferBuilder:
         offset = len(self.data)
         stored_values: list[tuple[float, ...]] = []
         for value in values:
-            packed = struct.pack(f"<{width}f", *(float(component) for component in value))
+            try:
+                packed = struct.pack(f"<{width}f", *(float(component) for component in value))
+            except (OverflowError, struct.error) as exc:
+                raise VrmaError(
+                    f"{accessor_type} accessor contains a value outside the float32 range"
+                ) from exc
             self.data.extend(packed)
             stored_values.append(struct.unpack(f"<{width}f", packed))
         byte_length = len(self.data) - offset
@@ -104,17 +109,21 @@ def build_vrma(clip: MotionClip, skeleton: Skeleton) -> Glb:
         nodes.append(node)
 
     builder = _BufferBuilder()
-    times = tuple((frame / clip.fps,) for frame in range(clip.frame_count))
+    times = (
+        tuple((value,) for value in clip.sample_times)
+        if clip.sample_times is not None
+        else tuple((frame / clip.fps,) for frame in range(clip.frame_count))
+    )
     time_accessor = builder.add_floats(times, "SCALAR")
-    translation_accessor = builder.add_floats(clip.hips_translations, "VEC3")
-
-    samplers: list[dict[str, Any]] = [
-        {"input": time_accessor, "output": translation_accessor, "interpolation": "LINEAR"}
-    ]
     hips_node = node_indices[0]
-    channels: list[dict[str, Any]] = [
-        {"sampler": 0, "target": {"node": hips_node, "path": "translation"}}
-    ]
+    samplers: list[dict[str, Any]] = []
+    channels: list[dict[str, Any]] = []
+    if clip.hips_translations:
+        translation_accessor = builder.add_floats(clip.hips_translations, "VEC3")
+        samplers.append(
+            {"input": time_accessor, "output": translation_accessor, "interpolation": "LINEAR"}
+        )
+        channels.append({"sampler": 0, "target": {"node": hips_node, "path": "translation"}})
     for bone_index in ordered_indices:
         bone = skeleton.bones[bone_index]
         track = clip.rotations.get(bone.name)

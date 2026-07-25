@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 
 import pytest
 
@@ -44,6 +45,19 @@ def test_writer_requires_vrma_suffix(
 ) -> None:
     with pytest.raises(VrmaError, match=r"\.vrma"):
         write_vrma(tmp_path / "motion.glb", identity_clip, hy_skeleton)
+
+
+def test_writer_reports_float32_overflow_as_vrma_error(
+    identity_clip: MotionClip,
+    hy_skeleton: Skeleton,
+) -> None:
+    oversized = replace(
+        identity_clip,
+        hips_translations=((1e100, 0.0, 0.0),) * identity_clip.frame_count,
+    )
+
+    with pytest.raises(VrmaError, match="outside the float32 range"):
+        build_vrma(oversized, hy_skeleton)
 
 
 def test_validator_rejects_duplicate_node_path(

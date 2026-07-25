@@ -1,4 +1,4 @@
-"""Command-line interface for generation, inspection, and validation."""
+"""Command-line interface for generation, curation, inspection, and validation."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from .curation import MAX_ROTATION_GAIN, ROTATION_PROJECTIONS, write_curated_vrma
 from .errors import VrmaError, VroomError
 from .glb import Glb
 from .hy_motion import HyMotionBackend, HyMotionOptions, find_hy_motion_root
@@ -74,6 +75,44 @@ def _build_parser() -> argparse.ArgumentParser:
         help="preserve HY-Motion's raw vertical root position",
     )
 
+    curate = subparsers.add_parser(
+        "curate",
+        help="make a bounded rotation-only clip from sampled LINEAR VRMA",
+    )
+    curate.add_argument("input", type=Path, help="source .vrma path")
+    curate.add_argument("-o", "--output", type=Path, required=True, help="output .vrma path")
+    curate.add_argument(
+        "--bones",
+        nargs="+",
+        required=True,
+        metavar="BONE",
+        help="exact humanoid rotation bones (space- or comma-separated)",
+    )
+    curate.add_argument("--duration", type=float, required=True, help="output duration in seconds")
+    curate.add_argument("--fade-in", type=float, required=True, help="smoothstep fade-in duration")
+    curate.add_argument(
+        "--fade-out", type=float, required=True, help="smoothstep fade-out duration"
+    )
+    curate.add_argument(
+        "--rotation-gain",
+        type=float,
+        default=1.0,
+        help=(f"relative rotation multiplier from 0 to {MAX_ROTATION_GAIN:g} (default: 1)"),
+    )
+    curate.add_argument(
+        "--rotation-projection",
+        choices=ROTATION_PROJECTIONS,
+        default="none",
+        help="project each local rotation before gain and fades (default: none)",
+    )
+    curate.add_argument("--start-frame", type=int, default=0, help="first source frame")
+    curate.add_argument(
+        "--end-frame",
+        type=int,
+        help="last source frame, inclusive (defaults to the final frame)",
+    )
+    curate.add_argument("--name", help="output animation name")
+
     validate = subparsers.add_parser("validate", help="validate .vrma files or a motion-pack ZIP")
     validate.add_argument("paths", type=Path, nargs="+")
     validate.add_argument("--quiet", action="store_true", help="only print invalid files")
@@ -110,6 +149,34 @@ def _generate(args: argparse.Namespace) -> int:
     glb.write(args.output)
     print(
         f"Wrote {args.output} ({clip.frame_count} frames, {clip.duration:.3f}s at {clip.fps:g} fps)"
+    )
+    return 0
+
+
+def _curate(args: argparse.Namespace) -> int:
+    bones = tuple(
+        bone
+        for argument in args.bones
+        for bone in (part.strip() for part in argument.split(","))
+        if bone
+    )
+    write_curated_vrma(
+        args.input,
+        args.output,
+        bones=bones,
+        duration=args.duration,
+        fade_in=args.fade_in,
+        fade_out=args.fade_out,
+        rotation_gain=args.rotation_gain,
+        rotation_projection=args.rotation_projection,
+        start_frame=args.start_frame,
+        end_frame=args.end_frame,
+        name=args.name,
+    )
+    curated = read_vrma(args.output)
+    print(
+        f"Wrote {args.output} "
+        f"({curated.frame_count} frames, {curated.duration:.3f}s, {len(bones)} rotation tracks)"
     )
     return 0
 
@@ -175,6 +242,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "generate":
             return _generate(args)
+        if args.command == "curate":
+            return _curate(args)
         if args.command == "validate":
             return _validate(args)
         if args.command == "inspect":
