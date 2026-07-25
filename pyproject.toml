@@ -38,6 +38,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 include = [
     "/README.md",
+    "/README.ja.md",
     "/pyproject.toml",
     "/src/vroom",
 ]
