@@ -15,7 +15,7 @@ VRMA 対応プレイヤーは、生成したクリップを VRM ヒューマノ�
 | コマンド | 用途 |
 | --- | --- |
 | `generate` | 英語のモーションプロンプトから VRMA クリップを一つ生成します |
-| `curate` | サンプリング済みの LINEAR 補間 VRMA から、範囲を限定した回転専用クリップを作ります |
+| `curate` | サンプリング済みの LINEAR 補間 VRMA から、選択した回転と任意の閉じたルートモーションを持つクリップを作ります |
 | `inspect` | VRM または VRMA の GLB を要約します |
 | `validate` | 一つ以上の VRMA ファイル、または ZIP 内の全 VRMA ファイルを検証します |
 
@@ -190,7 +190,8 @@ PyPI から取得する固定バージョンの Torch は、Linux x86-64 で CUD
 
 ## モーションのキュレーション
 
-`curate` は、構造を検証できるサンプリング済みの LINEAR 補間 VRMA を受け取り、決定論的な回転専用クリップを書き出します。
+`curate` は、構造を検証できるサンプリング済みの LINEAR 補間 VRMA を受け取り、選択した回転トラックを持つ決定論的なクリップを書き出します。
+デフォルトでは従来どおり回転専用となり、ルートの平行移動を削除します。
 
 ```bash
 uv run vroom curate output/wave.vrma \
@@ -202,7 +203,7 @@ uv run vroom curate output/wave.vrma \
   --rotation-gain 1.25
 ```
 
-このコマンドは、ルートの平行移動と指定外のトラックを削除します。
+デフォルトのコマンドは、ルートの平行移動と指定外のトラックを削除します。
 選択した回転を `inverse(first) * frame` で表し、クォータニオンの符号を最短経路上で連続させたうえで、残したサンプルの時間を変更します。
 Smoothstep フェードにより、最初と最後のキーフレームは恒等回転になります。
 
@@ -213,18 +214,96 @@ Smoothstep フェードにより、最初と最後のキーフレームは恒等
 | --- | --- |
 | `--bones` | 指定したヒューマノイド回転トラックを残します |
 | `--start-frame`、`--end-frame` | 終了フレームを含むソース範囲を選びます |
-| `--duration` | サンプル間の相対時間を保ったまま、選択したサンプルの時間を変更します |
+| `--duration` | サンプル間の相対時間を保ったままメインのサンプル時間を変更します。復帰テールは別途時間を追加します |
 | `--fade-in`、`--fade-out` | 始点と終点に Smoothstep フェードを適用します |
 | `--rotation-gain` | 先頭フレームを基準にした回転を `0` から `4` の範囲で拡大または縮小し、デフォルト値には `1` を使います |
 | `--rotation-projection` | `none` は回転全体を保ち、`twist-x`、`twist-y`、`twist-z` はローカル軸まわりのねじりだけを残します |
+| `--bone-rotation-gain BONE=GAIN` | 選択した 1 ボーンのゲインを上書きします。ボーンごとに繰り返せます |
+| `--bone-rotation-projection BONE=PROJECTION` | 選択した 1 ボーンの射影を上書きします。ボーンごとに繰り返せます |
+| `--hips-translation` | デフォルトの `strip` またはオプトインの `relative-return` を選びます |
+| `--hips-return-duration` | `relative-return` に必須の復帰テール時間を設定します |
 | `--name` | 出力アニメーション名を設定します |
 
 回転ゲインは、フェードより前にクォータニオン補間を使って適用します。
 `1` より大きい値は、小さな動きを増幅します。
 ねじりへの射影には Swing-Twist 分解を使うため、`--rotation-projection twist-y` を指定すると、オイラー角へ変換せずに頭と首のトラックをヨー回転だけにできます。
 
+ボーン単位のオプションは、指定した選択済みボーンだけについてグローバルなゲインまたは射影を上書きします。
+これにより、脚、足先、腰、腕を含む全身のボーンを残しながら、頭だけを特定軸へ射影できます。
+
+```bash
+uv run vroom curate output/bow.vrma \
+  --output output/bow-full-body.vrma \
+  --bones hips spine chest upperChest neck head \
+          leftUpperLeg rightUpperLeg leftLowerLeg rightLowerLeg \
+          leftFoot rightFoot leftToes rightToes \
+          leftUpperArm rightUpperArm leftLowerArm rightLowerArm \
+  --duration 2.0 \
+  --fade-in 0 \
+  --fade-out 0 \
+  --bone-rotation-projection head=twist-x \
+  --bone-rotation-gain leftUpperLeg=0.9 \
+  --bone-rotation-gain rightUpperLeg=0.9 \
+  --hips-translation relative-return \
+  --hips-return-duration 0.5
+```
+
+`relative-return` は、切り出した各 `hips` サンプルを `rest + (frame - first)` として残します。
+メインのルート軌道をフェードしたり短縮したりしません。
+最初の LINEAR 区間がレスト位置から動く場合は、その区間と同じ長さのレスト保持サンプルを先頭へ追加します。
+メインの最終サンプル後は、進入速度を引き継ぐ三次 Hermite 曲線をサンプリングし、速度 0 でレスト位置へ戻します。
+ルートの最後の 2 サンプルは正確なレスト位置になり、選択したすべての回転にも滑らかな Hermite 復帰を追加して、最後の 2 サンプルを恒等回転にします。
+したがって出力時間は、メインの `--duration`、必要な先頭保持時間、`--hips-return-duration` の合計です。
+
+復帰テールはメインのサンプルを弱めたり削除したりしません。
+ルートの復帰は、メイン軌道に対して 25 パーセントまたは 5 cm の大きい方まで外側へ継続できますが、キュレーション後のルート軌道全体はレスト位置から 0.5 m 以内でなければなりません。
+この上限を超える動作は拒否します。
+回転の復帰はメインの最大値を超えてもかまいませんが、有限で、恒等回転へ向かう連続した最短クォータニオン経路上になければなりません。
+Kokage などの利用側は、測定済みの出力メタデータを使って、アセットごとにより厳しい上限を適用できます。
+従来のフェードではなく復帰テールで回転を恒等姿勢へ戻す場合は、`--fade-out 0` を指定します。
+
 出力には、リターゲットに必要なヒューマノイドノードを残します。
 ソースの SHA-256、バイト長、変換設定は `asset.extras.vroomCuration` に記録します。
+メタデータのバージョン 3 は、選択した各ボーンの実効ポリシーに加え、ルートのモード、基準、保持時間、復帰時間、サンプル数、補間方法、終端条件を記録します。
+トップレベルでは `perBonePolicies`、`hipsTranslationPolicy`、`mainDurationMicroseconds`、`returnDurationMicroseconds`、`durationMicroseconds`、`maximumRootDisplacementMeters`、`maximumRootVelocityMetersPerSecond` という閉じたフィールド名を使います。
+`durationMicroseconds` は先頭の保持時間を含む最終エンコード出力から測定します。
+ルートの最大変位と区間速度も最終 float32 出力から測定し、float32 で値を下回らない境界へ切り上げます。
+削除モードでは `hipsTranslationPolicy` を `"none"` とし、復帰時間と二つのルート境界を `0` にします。
+Hermite 復帰の詳細は `transform.hipsTranslationReturn` に残します。
+
+### Python キュレーション API
+
+Python からも同じ閉じたポリシー型を使います。
+ボーン単位で上書きしない選択済みボーンには、グローバルな回転設定を適用します。
+
+```python
+from vroom import BoneCurationPolicy, HipsTranslationPolicy, curate_vrma
+
+curated = curate_vrma(
+    "output/bow.vrma",
+    bones=(
+        "hips",
+        "spine",
+        "leftUpperLeg",
+        "rightUpperLeg",
+        "leftFoot",
+        "rightFoot",
+    ),
+    duration=2.0,
+    fade_out=0.0,
+    bone_policies=(
+        BoneCurationPolicy("leftUpperLeg", rotation_gain=0.9),
+        BoneCurationPolicy("rightUpperLeg", rotation_gain=0.9),
+    ),
+    hips_translation_policy=HipsTranslationPolicy(
+        mode="relative-return",
+        return_duration=0.5,
+    ),
+)
+```
+
+`BoneCurationPolicy` のボーン名は重複できず、`bones` に含まれていなければなりません。
+`HipsTranslationPolicy()` のデフォルトは `strip` なので、既存の API 呼び出しは平行移動を削除し、従来の終端フェード動作を維持します。
 
 ### キュレーションの上限
 
@@ -237,7 +316,9 @@ Smoothstep フェードにより、最初と最後のキーフレームは恒等
 | アクセサごとのサンプル | 18,000 |
 | デコードする数値アクセサ成分の合計 | 1,000,000 |
 | アニメーションのチャンネルまたはサンプラー | 256 |
+| キュレーション後のサンプル | 18,000 |
 | キュレーション後の長さ | 3,600 秒 |
+| `relative-return` のルート変位 | レスト位置から 0.5 m |
 | シリアライズ後の出力 | 16 MiB |
 
 ## ファイルの確認と検証

@@ -17,7 +17,7 @@ checks animation files. It does not render or preview them.
 | Command | Purpose |
 | --- | --- |
 | `generate` | Generate one VRMA clip from an English motion prompt |
-| `curate` | Turn sampled LINEAR VRMA into a bounded clip with selected rotation tracks and no translation |
+| `curate` | Turn sampled LINEAR VRMA into a bounded clip with selected rotations and optional closed root motion |
 | `inspect` | Summarize a VRM or VRMA GLB |
 | `validate` | Validate one or more VRMA files, or every VRMA file in a ZIP archive |
 
@@ -209,7 +209,8 @@ committed lock does not define a Windows CUDA environment.
 ## Curate a motion
 
 `curate` accepts sampled LINEAR VRMA that passes the structural checks and
-writes a deterministic clip with selected rotation tracks and no translation:
+writes a deterministic clip with selected rotation tracks. By default it keeps
+the original rotation-only behavior and removes root translation:
 
 ```bash
 uv run vroom curate output/wave.vrma \
@@ -221,10 +222,10 @@ uv run vroom curate output/wave.vrma \
   --rotation-gain 1.25
 ```
 
-The command removes root translation and unselected tracks. It expresses each
-selected rotation as `inverse(first) * frame`, keeps quaternion signs on the
-shortest path, and retimes the retained samples. Smoothstep fades place the
-first and last keyframes at the identity rotation.
+The default command removes root translation and unselected tracks. It
+expresses each selected rotation as `inverse(first) * frame`, keeps quaternion
+signs on the shortest path, and retimes the retained samples. Smoothstep fades
+place the first and last keyframes at the identity rotation.
 
 An amplified or unfaded winding track may lack a continuous quaternion path
 back to exact identity. The command then fails before writing output and asks
@@ -234,10 +235,14 @@ for a longer fade-out or a narrower source crop.
 | --- | --- |
 | `--bones` | Keeps the listed humanoid rotation tracks |
 | `--start-frame`, `--end-frame` | Selects a source range; the end frame is inclusive |
-| `--duration` | Retimes the selected samples while preserving their relative spacing |
+| `--duration` | Retimes the selected main samples while preserving their relative spacing; a return tail adds time |
 | `--fade-in`, `--fade-out` | Applies smoothstep fades at the endpoints |
 | `--rotation-gain` | Scales first-frame-relative rotation from `0` through `4`; the default is `1` |
 | `--rotation-projection` | Keeps all rotation with `none`, or keeps local-axis twist with `twist-x`, `twist-y`, or `twist-z` |
+| `--bone-rotation-gain BONE=GAIN` | Overrides gain for one selected bone; repeat for different bones |
+| `--bone-rotation-projection BONE=PROJECTION` | Overrides projection for one selected bone; repeat for different bones |
+| `--hips-translation` | Uses the default `strip` mode or opt-in `relative-return` mode |
+| `--hips-return-duration` | Sets the return-tail duration required by `relative-return` |
 | `--name` | Sets the output animation name |
 
 Rotation gain uses quaternion interpolation before the fades. A value above
@@ -245,9 +250,115 @@ Rotation gain uses quaternion interpolation before the fades. A value above
 so `--rotation-projection twist-y` can keep yaw and remove the other head and
 neck rotation without an Euler-angle conversion.
 
+Per-bone options override the global gain or projection only for their named
+selected bone. This lets one curation retain a full-body bone set while, for
+example, projecting head motion without projecting the hips, legs, feet, or
+arms:
+
+```bash
+uv run vroom curate output/bow.vrma \
+  --output output/bow-full-body.vrma \
+  --bones hips spine chest upperChest neck head \
+          leftUpperLeg rightUpperLeg leftLowerLeg rightLowerLeg \
+          leftFoot rightFoot leftToes rightToes \
+          leftUpperArm rightUpperArm leftLowerArm rightLowerArm \
+  --duration 2.0 \
+  --fade-in 0 \
+  --fade-out 0 \
+  --bone-rotation-projection head=twist-x \
+  --bone-rotation-gain leftUpperLeg=0.9 \
+  --bone-rotation-gain rightUpperLeg=0.9 \
+  --hips-translation relative-return \
+  --hips-return-duration 0.5
+```
+
+`relative-return` retains each cropped hips sample as
+`rest + (frame - first)`. It does not fade or shorten the main root trajectory.
+If the first LINEAR segment leaves rest, curation prepends one rest hold with
+the same duration as that segment. After the final main sample, it continues
+the incoming velocity and samples a cubic Hermite return to rest with zero
+terminal velocity. The last two root samples are exact rest, and every
+selected rotation receives a corresponding smooth Hermite return whose last
+two samples are exact identity. The output duration is therefore the requested
+main `--duration`, plus the optional start hold, plus
+`--hips-return-duration`.
+
+The return tail never attenuates or removes a main sample. A root return may
+continue beyond the main trajectory by at most the larger of 25 percent or
+5 cm, and the entire curated root trajectory must remain within 0.5 m of rest.
+Curation rejects motion beyond those caps. Rotation returns may pass the main
+peak but must remain finite and on a continuous shortest quaternion path to
+identity. Kokage or another consumer can enforce tighter per-asset bounds from
+the measured output metadata. Set `--fade-out 0` when the return tail, rather
+than the legacy main-clip fade, should bring rotations back to identity.
+
 The output retains the humanoid nodes needed for retargeting. It records the
 source SHA-256, source byte length, and transform settings under
-`asset.extras.vroomCuration`.
+`asset.extras.vroomCuration`. Metadata version 3 records the effective policy
+for every selected bone and the root mode, basis, hold, return duration, sample
+count, interpolation, and endpoint contract.
+
+The version 3 top-level policy and bound fields have this closed vocabulary:
+
+```json
+{
+  "perBonePolicies": [
+    {
+      "bone": "leftUpperLeg",
+      "rotationGain": 0.9,
+      "rotationProjection": "none"
+    }
+  ],
+  "hipsTranslationPolicy": "relative-return",
+  "mainDurationMicroseconds": 2000000,
+  "returnDurationMicroseconds": 500000,
+  "durationMicroseconds": 2533333,
+  "maximumRootDisplacementMeters": 0.03999999910593033,
+  "maximumRootVelocityMetersPerSecond": 0.11374999582767487
+}
+```
+
+`durationMicroseconds` is measured from the final encoded output and includes
+the optional start hold. Root displacement and segment velocity maxima are
+also measured from the final float32 output and rounded upward to a float32
+bound. Strip mode writes `hipsTranslationPolicy: "none"`, a zero return
+duration, and zero root bounds. Hermite construction details remain under
+`transform.hipsTranslationReturn`.
+
+### Python curation API
+
+Python callers use the same closed policies. Global rotation settings remain
+the fallback for selected bones that have no override:
+
+```python
+from vroom import BoneCurationPolicy, HipsTranslationPolicy, curate_vrma
+
+curated = curate_vrma(
+    "output/bow.vrma",
+    bones=(
+        "hips",
+        "spine",
+        "leftUpperLeg",
+        "rightUpperLeg",
+        "leftFoot",
+        "rightFoot",
+    ),
+    duration=2.0,
+    fade_out=0.0,
+    bone_policies=(
+        BoneCurationPolicy("leftUpperLeg", rotation_gain=0.9),
+        BoneCurationPolicy("rightUpperLeg", rotation_gain=0.9),
+    ),
+    hips_translation_policy=HipsTranslationPolicy(
+        mode="relative-return",
+        return_duration=0.5,
+    ),
+)
+```
+
+`BoneCurationPolicy` names must be unique members of `bones`.
+`HipsTranslationPolicy()` defaults to `strip`, so existing API calls keep
+removing translation and using the original endpoint-fade behavior.
 
 ### Curation limits
 
@@ -260,7 +371,9 @@ source SHA-256, source byte length, and transform settings under
 | Samples per accessor | 18,000 |
 | Decoded numeric accessor components | 1,000,000 |
 | Animation channels or samplers | 256 |
+| Curated samples | 18,000 |
 | Curated duration | 3,600 seconds |
+| `relative-return` root displacement | 0.5 m from rest |
 | Serialized output | 16 MiB |
 
 ## Inspect and validate files
