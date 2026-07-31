@@ -35,7 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path(
             os.environ.get(
                 "HY_MOTION_MODEL_PATH",
-                "vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0-Lite",
+                "vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0",
             )
         ),
         help="directory containing HY-Motion config.yml and latest.ckpt",

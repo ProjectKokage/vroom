@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
-from vroom.cli import main
+from vroom.cli import _build_parser, main
 from vroom.glb import Glb
 from vroom.motion import MotionClip, Skeleton
 from vroom.vrma import build_vrma, write_vrma
@@ -40,6 +41,14 @@ def test_generate_reports_missing_checkpoint(tmp_path, capsys) -> None:
 
     assert code == 2
     assert "missing HY-Motion runtime files" in capsys.readouterr().err
+
+
+def test_generate_defaults_to_full_checkpoint(monkeypatch) -> None:
+    monkeypatch.delenv("HY_MOTION_MODEL_PATH", raising=False)
+
+    args = _build_parser().parse_args(["generate", "a person waves", "--output", "wave.vrma"])
+
+    assert args.model_path == Path("vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0")
 
 
 def test_inspect_reports_malformed_animation_cleanly(

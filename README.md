@@ -66,12 +66,12 @@ uv sync --extra inference
 ```
 
 The bootstrap script fetches the runtime statistics and skeleton assets. It
-does not fetch a motion checkpoint. Download the Lite checkpoint:
+does not fetch a motion checkpoint. Download the full checkpoint:
 
 ```bash
 uv run --extra inference huggingface-cli download \
   tencent/HY-Motion-1.0 \
-  --include "HY-Motion-1.0-Lite/*" \
+  --include "HY-Motion-1.0/*" \
   --local-dir vendor/HY-Motion-1.0/ckpts/tencent
 ```
 
@@ -85,7 +85,7 @@ uv run --extra inference vroom generate \
 uv run vroom validate output/wave.vrma
 ```
 
-`generate` uses the Lite checkpoint at its default path, a four-second
+`generate` uses the full checkpoint at its default path, a four-second
 duration, seed `42`, and device auto-selection. The command creates the output
 directory when needed. Unless both text encoders exist in the HY-Motion
 checkout, the first generation downloads Qwen3-8B and CLIP-L from
@@ -93,11 +93,12 @@ Hugging Face and places them in the Hugging Face cache.
 
 ## Installation and model paths
 
-### Full motion checkpoint
+### Lite motion checkpoint
 
-The full model uses the same download command as the Lite model. Replace
-`HY-Motion-1.0-Lite/*` with `HY-Motion-1.0/*`. Inference needs substantial
-memory; the [upstream model table](https://github.com/Tencent-Hunyuan/HY-Motion-1.0#-model-zoo)
+The Lite model uses the same download command as the full model. Replace
+`HY-Motion-1.0/*` with `HY-Motion-1.0-Lite/*`. Inference with either model
+needs substantial memory; the
+[upstream model table](https://github.com/Tencent-Hunyuan/HY-Motion-1.0#-model-zoo)
 lists hardware guidance for both checkpoints.
 
 ### Wheel installation
@@ -116,7 +117,7 @@ to fetch the Git LFS assets and a motion checkpoint. Then set both paths:
 
 ```bash
 export VROOM_HY_MOTION_ROOT=/absolute/path/to/HY-Motion-1.0
-export HY_MOTION_MODEL_PATH=/absolute/path/to/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0-Lite
+export HY_MOTION_MODEL_PATH=/absolute/path/to/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0
 ```
 
 You can pass the same locations to one command with `--hy-motion-root` and
@@ -306,7 +307,7 @@ uv run pytest
 After you download the models, run the opt-in inference smoke tests:
 
 ```bash
-HY_MOTION_MODEL_PATH=vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0-Lite \
+HY_MOTION_MODEL_PATH=vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0 \
   uv run --extra inference pytest -m integration
 ```
 

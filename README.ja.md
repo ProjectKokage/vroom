@@ -61,12 +61,12 @@ uv sync --extra inference
 
 ブートストラップスクリプトが取得するのは、実行時に使う統計ファイルとスケルトンアセットです。
 モーション生成用チェックポイントは取得しません。
-Lite チェックポイントをダウンロードします。
+フル版のチェックポイントをダウンロードします。
 
 ```bash
 uv run --extra inference huggingface-cli download \
   tencent/HY-Motion-1.0 \
-  --include "HY-Motion-1.0-Lite/*" \
+  --include "HY-Motion-1.0/*" \
   --local-dir vendor/HY-Motion-1.0/ckpts/tencent
 ```
 
@@ -80,17 +80,17 @@ uv run --extra inference vroom generate \
 uv run vroom validate output/wave.vrma
 ```
 
-`generate` は、デフォルトパスの Lite チェックポイント、4 秒の動作時間、シード `42`、デバイスの自動選択を使います。
+`generate` は、デフォルトパスのフル版チェックポイント、4 秒の動作時間、シード `42`、デバイスの自動選択を使います。
 出力先のディレクトリがなければ、コマンドが作成します。
 HY-Motion のチェックアウト内に二つのテキストエンコーダーがそろっていない場合、初回生成時に Qwen3-8B と CLIP-L を Hugging Face からダウンロードし、Hugging Face のキャッシュへ保存します。
 
 ## インストール先とモデルの配置
 
-### フル版のモーションチェックポイント
+### Lite 版のモーションチェックポイント
 
-フル版も Lite 版と同じコマンドでダウンロードできます。
-`HY-Motion-1.0-Lite/*` を `HY-Motion-1.0/*` に置き換えてください。
-推論には大きなメモリが必要になるため、両チェックポイントのハードウェア要件は [HY-Motion のモデル一覧](https://github.com/Tencent-Hunyuan/HY-Motion-1.0#-model-zoo) で確認してください。
+Lite 版もフル版と同じコマンドでダウンロードできます。
+`HY-Motion-1.0/*` を `HY-Motion-1.0-Lite/*` に置き換えてください。
+どちらのモデルも推論には大きなメモリが必要になるため、両チェックポイントのハードウェア要件は [HY-Motion のモデル一覧](https://github.com/Tencent-Hunyuan/HY-Motion-1.0#-model-zoo) で確認してください。
 
 ### wheel からのインストール
 
@@ -107,7 +107,7 @@ HY-Motion は別のディレクトリへクローンし、[公式のセットア
 
 ```bash
 export VROOM_HY_MOTION_ROOT=/absolute/path/to/HY-Motion-1.0
-export HY_MOTION_MODEL_PATH=/absolute/path/to/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0-Lite
+export HY_MOTION_MODEL_PATH=/absolute/path/to/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0
 ```
 
 コマンドごとに `--hy-motion-root` と `--model-path` を渡しても構いません。
@@ -278,7 +278,7 @@ uv run pytest
 モデルをダウンロードした後は、オプトイン形式の推論スモークテストを実行できます。
 
 ```bash
-HY_MOTION_MODEL_PATH=vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0-Lite \
+HY_MOTION_MODEL_PATH=vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0 \
   uv run --extra inference pytest -m integration
 ```
 
