@@ -1,9 +1,12 @@
 """VRMA generation, curation, inspection, and validation."""
 
 from .curation import (
+    HIPS_TRANSLATION_MODES,
     MAX_ROTATION_GAIN,
     ROTATION_PROJECTIONS,
+    BoneCurationPolicy,
     CurationOptions,
+    HipsTranslationPolicy,
     curate_vrma,
     write_curated_vrma,
 )
@@ -13,10 +16,13 @@ from .vrm import VrmAvatar
 from .vrma import ValidationReport, read_vrma, validate_vrma, write_vrma
 
 __all__ = [
+    "HIPS_TRANSLATION_MODES",
     "MAX_ROTATION_GAIN",
     "ROTATION_PROJECTIONS",
+    "BoneCurationPolicy",
     "CurationOptions",
     "Glb",
+    "HipsTranslationPolicy",
     "MotionClip",
     "Skeleton",
     "ValidationReport",

@@ -10,7 +10,14 @@ import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from .curation import MAX_ROTATION_GAIN, ROTATION_PROJECTIONS, write_curated_vrma
+from .curation import (
+    HIPS_TRANSLATION_MODES,
+    MAX_ROTATION_GAIN,
+    ROTATION_PROJECTIONS,
+    BoneCurationPolicy,
+    HipsTranslationPolicy,
+    write_curated_vrma,
+)
 from .errors import VrmaError, VroomError
 from .glb import Glb
 from .hy_motion import HyMotionBackend, HyMotionOptions, find_hy_motion_root
@@ -77,7 +84,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     curate = subparsers.add_parser(
         "curate",
-        help="make a bounded rotation-only clip from sampled LINEAR VRMA",
+        help="make a bounded clip from sampled LINEAR VRMA",
     )
     curate.add_argument("input", type=Path, help="source .vrma path")
     curate.add_argument("-o", "--output", type=Path, required=True, help="output .vrma path")
@@ -88,7 +95,12 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="BONE",
         help="exact humanoid rotation bones (space- or comma-separated)",
     )
-    curate.add_argument("--duration", type=float, required=True, help="output duration in seconds")
+    curate.add_argument(
+        "--duration",
+        type=float,
+        required=True,
+        help="main action duration; relative-return adds its hold and tail",
+    )
     curate.add_argument("--fade-in", type=float, required=True, help="smoothstep fade-in duration")
     curate.add_argument(
         "--fade-out", type=float, required=True, help="smoothstep fade-out duration"
@@ -104,6 +116,32 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=ROTATION_PROJECTIONS,
         default="none",
         help="project each local rotation before gain and fades (default: none)",
+    )
+    curate.add_argument(
+        "--bone-rotation-gain",
+        action="append",
+        default=[],
+        metavar="BONE=GAIN",
+        help="override rotation gain for one selected bone; repeat as needed",
+    )
+    curate.add_argument(
+        "--bone-rotation-projection",
+        action="append",
+        default=[],
+        metavar="BONE=PROJECTION",
+        help="override rotation projection for one selected bone; repeat as needed",
+    )
+    curate.add_argument(
+        "--hips-translation",
+        choices=HIPS_TRANSLATION_MODES,
+        default="strip",
+        help="strip root motion or preserve it with a rest-to-rest return tail",
+    )
+    curate.add_argument(
+        "--hips-return-duration",
+        type=float,
+        default=0.0,
+        help="return-tail duration required by --hips-translation relative-return",
     )
     curate.add_argument("--start-frame", type=int, default=0, help="first source frame")
     curate.add_argument(
@@ -160,6 +198,15 @@ def _curate(args: argparse.Namespace) -> int:
         for bone in (part.strip() for part in argument.split(","))
         if bone
     )
+    bone_policies = _parse_bone_policies(
+        bones,
+        gain_arguments=args.bone_rotation_gain,
+        projection_arguments=args.bone_rotation_projection,
+    )
+    hips_translation_policy = HipsTranslationPolicy(
+        mode=args.hips_translation,
+        return_duration=args.hips_return_duration,
+    )
     write_curated_vrma(
         args.input,
         args.output,
@@ -169,16 +216,71 @@ def _curate(args: argparse.Namespace) -> int:
         fade_out=args.fade_out,
         rotation_gain=args.rotation_gain,
         rotation_projection=args.rotation_projection,
+        bone_policies=bone_policies,
+        hips_translation_policy=hips_translation_policy,
         start_frame=args.start_frame,
         end_frame=args.end_frame,
         name=args.name,
     )
     curated = read_vrma(args.output)
+    translation_label = (
+        "" if hips_translation_policy.mode == "strip" else ", first-relative hips translation"
+    )
     print(
         f"Wrote {args.output} "
-        f"({curated.frame_count} frames, {curated.duration:.3f}s, {len(bones)} rotation tracks)"
+        f"({curated.frame_count} frames, {curated.duration:.3f}s, "
+        f"{len(bones)} rotation tracks{translation_label})"
     )
     return 0
+
+
+def _parse_bone_policies(
+    selected_bones: tuple[str, ...],
+    *,
+    gain_arguments: Sequence[str],
+    projection_arguments: Sequence[str],
+) -> tuple[BoneCurationPolicy, ...]:
+    gains = _parse_bone_assignments(gain_arguments, label="bone rotation gain")
+    projections = _parse_bone_assignments(
+        projection_arguments,
+        label="bone rotation projection",
+    )
+    policy_bones = set(gains) | set(projections)
+    ordered_policy_bones = tuple(bone for bone in selected_bones if bone in policy_bones) + tuple(
+        sorted(policy_bones - set(selected_bones))
+    )
+    parsed_gains: dict[str, float] = {}
+    for bone, value in gains.items():
+        try:
+            parsed_gains[bone] = float(value)
+        except ValueError as exc:
+            raise VrmaError(f"{bone} rotation gain must be a number") from exc
+    return tuple(
+        BoneCurationPolicy(
+            bone=bone,
+            rotation_gain=parsed_gains.get(bone),
+            rotation_projection=projections.get(bone),
+        )
+        for bone in ordered_policy_bones
+    )
+
+
+def _parse_bone_assignments(
+    arguments: Sequence[str],
+    *,
+    label: str,
+) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for argument in arguments:
+        bone, separator, value = argument.partition("=")
+        bone = bone.strip()
+        value = value.strip()
+        if not separator or not bone or not value:
+            raise VrmaError(f"{label} must use BONE=VALUE")
+        if bone in assignments:
+            raise VrmaError(f"{label} repeats {bone}")
+        assignments[bone] = value
+    return assignments
 
 
 def _print_validation(label: str, report: object, quiet: bool) -> bool:
