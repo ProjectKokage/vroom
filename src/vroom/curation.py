@@ -703,7 +703,7 @@ def _root_motion_metrics(output: Glb) -> tuple[float, float]:
             ),
             "encoded hips rest translation",
         )
-        maximum_displacement = max(_vector_distance(position, rest) for position in positions)
+        maximum_displacement = max(math.dist(position, rest) for position in positions)
         if maximum_displacement > MAX_CURATED_ROOT_DISPLACEMENT_METERS:
             raise VrmaError(
                 "encoded hips translation exceeds the absolute "
@@ -711,7 +711,7 @@ def _root_motion_metrics(output: Glb) -> tuple[float, float]:
             )
         maximum_velocity = max(
             (
-                _vector_distance(positions[index], positions[index - 1])
+                math.dist(positions[index], positions[index - 1])
                 / (times[index] - times[index - 1])
                 for index in range(1, len(times))
             ),
@@ -876,7 +876,7 @@ def _needs_start_hold(
     hips_translations: tuple[Vec3, ...],
     rotations: dict[str, tuple[Quat, ...]],
 ) -> bool:
-    if _vector_distance(hips_translations[0], hips_translations[1]) > 1e-12:
+    if math.dist(hips_translations[0], hips_translations[1]) > 1e-12:
         return True
     return any(
         _quaternion_distance(IDENTITY_QUATERNION, values[1]) > 1e-12
@@ -899,7 +899,7 @@ def _translation_return_tail(
     )
     return_interval = return_duration / return_intervals
     curve_duration = return_interval * (return_intervals - 2)
-    main_bound = max(_vector_distance(value, rest) for value in values)
+    main_bound = max(math.dist(value, rest) for value in values)
     if main_bound > MAX_CURATED_ROOT_DISPLACEMENT_METERS:
         raise VrmaError(
             "retained main hips translation exceeds the absolute "
@@ -932,13 +932,13 @@ def _translation_return_tail(
         )
         if interval == return_intervals - 1:
             value = rest
-        if _vector_distance(value, rest) > continuation_bound + bound_tolerance:
+        if math.dist(value, rest) > continuation_bound + bound_tolerance:
             raise VrmaError(
                 "hips return tail exceeds the bounded translation continuation; "
                 "crop at a slower endpoint or shorten the return duration"
             )
         tail.append(value)
-    if _vector_distance(first_return, rest) > continuation_bound + bound_tolerance:
+    if math.dist(first_return, rest) > continuation_bound + bound_tolerance:
         raise VrmaError(
             "hips return tail exceeds the bounded translation continuation; "
             "crop at a slower endpoint or shorten the return duration"
@@ -1016,10 +1016,6 @@ def _hermite_bases(amount: float) -> tuple[float, float, float]:
         cubed - 2.0 * squared + amount,
         -2.0 * cubed + 3.0 * squared,
     )
-
-
-def _vector_distance(left: Sequence[float], right: Sequence[float]) -> float:
-    return math.sqrt(sum((a - b) * (a - b) for a, b in zip(left, right, strict=True)))
 
 
 def _quaternion_distance(left: Quat, right: Quat) -> float:
@@ -1282,12 +1278,12 @@ def _require_serialized_rest_endpoints(output: Glb) -> None:
                 ),
                 "encoded hips rest translation",
             )
-            if any(_vector_distance(value, rest) > 1e-6 for value in endpoint_values):
+            if any(math.dist(value, rest) > 1e-6 for value in endpoint_values):
                 raise VrmaError(
                     "curated hips translation did not encode exact rest holds at both endpoints"
                 )
         elif path == "rotation" and any(
-            _vector_distance(value, IDENTITY_QUATERNION) > 1e-6 for value in endpoint_values
+            math.dist(value, IDENTITY_QUATERNION) > 1e-6 for value in endpoint_values
         ):
             raise VrmaError(
                 "curated rotation did not encode exact identity holds at both endpoints"
