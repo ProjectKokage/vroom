@@ -37,9 +37,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    generate = subparsers.add_parser("generate", help="generate one VRMA clip from text")
+    generate = subparsers.add_parser("generate", help="generate VRMA from text or an ARDY plan")
     generate.add_argument("prompt", nargs="?", help="English description of the desired motion")
-    generate.add_argument("--backend", choices=("ardy", "hy-motion"), default="ardy")
+    generate.add_argument(
+        "--backend", choices=("ardy", "hy-motion"), default="ardy", help="default: ardy"
+    )
     generate.add_argument("--plan", type=Path, help="ARDY JSON motion plan")
     generate.add_argument("--model", default="core", help="ARDY Core checkpoint: core40 or core8")
     generate.add_argument("--checkpoints-dir", type=Path, help="local ARDY checkpoint directories")
@@ -250,6 +252,14 @@ def _candidate_path(path: Path, seed: int, count: int) -> Path:
     return path if count == 1 else path.with_name(f"{path.stem}-{seed}{path.suffix}")
 
 
+def _path_identity(path: Path) -> Path | tuple[int, int]:
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return path.resolve()
+    return info.st_dev, info.st_ino
+
+
 def _print_written(path: Path, clip: MotionClip) -> None:
     print(f"Wrote {path} ({clip.frame_count} frames, {clip.duration:.3f}s at {clip.fps:g} fps)")
 
@@ -298,8 +308,10 @@ def _generate_ardy(args: argparse.Namespace) -> int:
         outputs.append(args.report)
     inputs = [value for value in (args.plan, plan.continuation) if value is not None]
     inputs.extend(target.source for target in plan.constraints if hasattr(target, "source"))
-    resolved = [path.resolve() for path in outputs]
-    if len(set(resolved)) != len(resolved) or set(resolved) & {path.resolve() for path in inputs}:
+    resolved = [_path_identity(path) for path in outputs]
+    if len(set(resolved)) != len(resolved) or set(resolved) & {
+        _path_identity(path) for path in inputs
+    }:
         raise ArdyError("output paths must be distinct and must not overwrite plan/source inputs")
     options = ArdyOptions(
         model=args.model,

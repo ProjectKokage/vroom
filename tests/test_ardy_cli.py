@@ -308,11 +308,15 @@ def test_sidecar_and_source_collisions_fail_before_runtime(
     assert all(path.read_bytes() == contents for path, contents in existing.items())
 
 
-def test_symlink_report_cannot_overwrite_plan_input(tmp_path, fake_ardy, capsys) -> None:
+@pytest.mark.parametrize("link", ["symlink", "hardlink"])
+def test_linked_report_cannot_overwrite_plan_input(tmp_path, fake_ardy, capsys, link) -> None:
     plan = _plan_file(tmp_path)
     original = plan.read_bytes()
     alias = tmp_path / "report.json"
-    alias.symlink_to(plan.name)
+    if link == "symlink":
+        alias.symlink_to(plan.name)
+    else:
+        alias.hardlink_to(plan)
     assert (
         cli.main(
             [
