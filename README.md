@@ -103,6 +103,8 @@ writing outputs if any target misses tolerance.
 
 The [ARDY authoring guide](docs/ardy.md) covers the JSON schema, Python API,
 coordinate conventions, timing, continuation, and constraint limitations.
+The [verification record](docs/ardy-verification.md) names tested hardware,
+native checks, rendered results, and their limits.
 
 ### ARDY device selection
 

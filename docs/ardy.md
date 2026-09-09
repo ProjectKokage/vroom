@@ -4,6 +4,8 @@
 can follow a timed plan, generate seed variants, or extend a saved source
 motion. See the [README](../README.md#install-ardy-and-generate) for installation
 and Hugging Face access setup.
+The [verification record](ardy-verification.md) describes tested native and
+rendered behavior for specific models and machines.
 
 ## Runtime and checkpoints
 
@@ -83,8 +85,9 @@ UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy vroom generate \
 
 `--duration` is the total duration, including the preserved prefix. The source
 must use the model's 20 fps, contain at least four frames, and be shorter than
-the requested total. Every original source rotation and root sample is
-restored after correction. This preserves the prefix exactly; it does not
+the requested total. Correction receives the original prefix as full-body
+constraints, and every original source rotation and root sample is restored
+afterward. This preserves the prefix exactly; it does not
 guarantee a smooth boundary with the newly generated frames. Inspect the seam.
 
 ## JSON motion plan
@@ -134,6 +137,8 @@ items. `--motion-memory-mib` defaults to 256 MiB and bounds estimated working
 motion data and source archive expansion. Increase it explicitly for longer
 clips. It excludes model weights, encoder memory, and accelerator attention
 allocations; it is not a limit on the process's total memory.
+Output and report paths must be distinct from each other and from plan/source
+inputs, including symbolic links and hard links to the same file.
 
 ## Constraint fields and coordinates
 

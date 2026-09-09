@@ -97,6 +97,7 @@ UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy vroom generate \
 `--report report.json` は制約からの誤差を保存し、`--strict` は許容誤差を超えた場合にファイルの出力前に失敗します。
 
 JSON 形式、Python API、座標系、時刻、続きの生成、制約の限界は [ARDY オーサリングガイド](docs/ardy.md)（英語）を参照してください。
+検証したハードウェア、ネイティブ実行、描画結果とその限界は [検証記録](docs/ardy-verification.md)（英語）にまとめています。
 
 ### ARDY のデバイス選択
 
