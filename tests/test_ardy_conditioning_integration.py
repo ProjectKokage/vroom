@@ -133,6 +133,68 @@ def test_real_full_pose_reference_conditions_all_joints_at_requested_time(
     assert targets.correction[0].name == "fullbody"
 
 
+def test_native_correction_anchors_prefix_and_preserves_future_pose_target(
+    runtime, tmp_path, monkeypatch
+) -> None:
+    from ardy import postprocess
+
+    from vroom.ardy import ArdyBackend
+
+    torch = runtime.torch
+    local, roots = _motion(runtime)
+    roots[..., 0] = -0.04
+    roots[..., 1] = 0.96
+    contacts = torch.ones(1, 21, 4)
+    prefix = tmp_path / "prefix.npz"
+    runtime.np.savez(
+        prefix,
+        local_rot_mats=local[0, :7].numpy(),
+        root_positions=roots[0, :7].numpy(),
+        fps=runtime.np.asarray(20.0),
+    )
+    plan = ArdyPlan(
+        1,
+        (PromptCue(0, "Stand still."),),
+        constraints=(PoseTarget(1, _pose_file(runtime, tmp_path), 0),),
+        continuation=prefix,
+    )
+    targets = build_targets(plan, runtime.model, max_bytes=1_000_000)
+    correct = postprocess.post_process_motion
+    # A future pose alone moves the previously generated history, creating a
+    # jump when the runtime restores that history after native correction.
+    unanchored = correct(local, roots, contacts, runtime.model.skeleton, targets.correction)
+    unanchored_step = torch.linalg.vector_norm(unanchored["root_positions"][0, 7] - roots[0, 6])
+    assert unanchored_step > 0.02
+    corrected = []
+
+    def record_correction(*args, **kwargs):
+        output = correct(*args, **kwargs)
+        corrected.append({key: value.clone() for key, value in output.items()})
+        return output
+
+    monkeypatch.setattr(postprocess, "post_process_motion", record_correction)
+    backend = ArdyBackend()
+    monkeypatch.setattr(
+        backend,
+        "_sample",
+        lambda *args: {
+            "local_rot_mats": local.clone(),
+            "root_positions": roots.clone(),
+            "foot_contacts": contacts.clone(),
+        },
+    )
+    (result,) = backend._generate_loaded(plan, runtime.model, (torch.zeros(1, 1, 4096),))
+    # Check native output before the separate exact-byte restoration, so a
+    # restore-only implementation cannot satisfy this regression assertion.
+    torch.testing.assert_close(corrected[0]["root_positions"][0, :7], roots[0, :7])
+    torch.testing.assert_close(corrected[0]["local_rot_mats"][0, :7], local[0, :7])
+    anchored_step = torch.linalg.vector_norm(corrected[0]["root_positions"][0, 7] - roots[0, 6])
+    assert anchored_step < 0.005
+    runtime.np.testing.assert_array_equal(result.source.root_positions[:7], roots[0, :7].numpy())
+    runtime.np.testing.assert_array_equal(result.source.local_rot_mats[:7], local[0, :7].numpy())
+    assert result.deviations and all(value.satisfied for value in result.deviations)
+
+
 def test_real_subset_pose_maps_vrm_semantics_and_supplies_required_hips(runtime, tmp_path) -> None:
     path = _pose_file(runtime, tmp_path)
     target = PoseTarget(0.5, path, 0.05, joints=("leftHand", "leftFoot"))

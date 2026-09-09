@@ -48,6 +48,7 @@ def fake_modules(monkeypatch):
         tensor=lambda value: _Tensor(np.array(value)),
         cat=lambda values, dim: _Tensor(np.concatenate(values, axis=dim)),
         ones=lambda shape, **kwargs: _Tensor(np.ones(shape, dtype=kwargs.get("dtype"))),
+        arange=lambda count: _Tensor(np.arange(count)),
         isfinite=lambda value: _Tensor(np.isfinite(value)),
         bool=np.bool_,
         inference_mode=nullcontext,
@@ -61,7 +62,14 @@ def fake_modules(monkeypatch):
         backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
     )
     monkeypatch.setitem(sys.modules, "torch", torch)
-    for name in ("ardy", "ardy.model", "ardy.model.registry", "ardy.tools", "ardy.postprocess"):
+    for name in (
+        "ardy",
+        "ardy.model",
+        "ardy.model.registry",
+        "ardy.tools",
+        "ardy.postprocess",
+        "ardy.constraints",
+    ):
         module = ModuleType(name)
         module.__path__ = []
         monkeypatch.setitem(sys.modules, name, module)
@@ -70,6 +78,7 @@ def fake_modules(monkeypatch):
     )
     sys.modules["ardy.tools"].seed_everything = seeded.append
     sys.modules["ardy.postprocess"].post_process_motion = lambda *args, **kwargs: {}
+    sys.modules["ardy.constraints"].FullBodyConstraintSet = SimpleNamespace
     return SimpleNamespace(torch=torch, seeded=seeded, postprocess=sys.modules["ardy.postprocess"])
 
 
@@ -305,11 +314,34 @@ def test_seed_variants_restore_exact_prefix_after_correction_before_measurement(
     model = _Model()
     backend = ArdyBackend()
     prefix = _prefix()
+    targets = _targets()
+    user_constraint = object()
+    targets.correction = (user_constraint,)
+    monkeypatch.setattr(runtime, "build_targets", lambda *args, **kwargs: targets)
     monkeypatch.setattr(runtime, "read_source", lambda *args, **kwargs: prefix)
     monkeypatch.setattr(backend, "_sample", lambda *args: _decoded_motion(21))
+    joint_offsets = np.arange(81).reshape(27, 3) / 100
+    world_basis = np.asarray([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    model.skeleton.fk = lambda local, roots: (
+        _Tensor(local @ world_basis),
+        _Tensor(roots[..., None, :] + joint_offsets),
+        None,
+    )
+    supplied = []
 
     def correct(local, roots, contacts, skeleton, *, constraint_lst):
-        assert constraint_lst is None
+        assert len(constraint_lst) == 2
+        assert constraint_lst[0] is user_constraint
+        anchor = constraint_lst[1]
+        assert anchor.skeleton is model.skeleton
+        np.testing.assert_array_equal(anchor.frame_indices, np.arange(prefix.frame_count))
+        np.testing.assert_array_equal(
+            anchor.global_joints_positions, prefix.root_positions[:, None, :] + joint_offsets
+        )
+        np.testing.assert_array_equal(
+            anchor.global_joints_rots, prefix.local_rot_mats @ world_basis
+        )
+        supplied.append(anchor)
         return {"root_positions": _Tensor(roots + 100)}
 
     prepared_runtime.postprocess.post_process_motion = correct
@@ -326,11 +358,37 @@ def test_seed_variants_restore_exact_prefix_after_correction_before_measurement(
         (_Tensor([[[1]]]),),
     )
     assert prepared_runtime.seeded == [7, 8]
+    assert supplied[0] is supplied[1]
+    assert targets.correction == (user_constraint,)
     assert [result.seed for result in results] == [7, 8]
     for roots, result in zip(measured, results, strict=True):
         np.testing.assert_array_equal(roots[:7], prefix.root_positions)
         np.testing.assert_array_equal(result.source.root_positions[:7], prefix.root_positions)
         np.testing.assert_array_equal(result.source.root_positions[7:], np.full((14, 3), 100))
+
+
+def test_disabled_correction_skips_prefix_anchor_but_restores_exact_prefix(
+    monkeypatch, prepared_runtime
+) -> None:
+    backend = ArdyBackend(ArdyOptions(postprocess=False))
+    prefix = _prefix()
+    monkeypatch.setattr(runtime, "read_source", lambda *args, **kwargs: prefix)
+    monkeypatch.setattr(backend, "_sample", lambda *args: _decoded_motion(21))
+    monkeypatch.setattr(
+        sys.modules["ardy.constraints"],
+        "FullBodyConstraintSet",
+        lambda **kwargs: pytest.fail("disabled correction built a prefix anchor"),
+    )
+    prepared_runtime.postprocess.post_process_motion = lambda *args, **kwargs: pytest.fail(
+        "disabled correction ran"
+    )
+    (result,) = backend._generate_loaded(
+        ArdyPlan(1, (PromptCue(0, "Continue."),), continuation="prefix.npz"),
+        _Model(),
+        (_Tensor([[[1]]]),),
+    )
+    np.testing.assert_array_equal(result.source.local_rot_mats[:7], prefix.local_rot_mats)
+    np.testing.assert_array_equal(result.source.root_positions[:7], prefix.root_positions)
 
 
 @pytest.mark.parametrize("frames,fps", [(3, 20), (21, 20), (7, 30)])

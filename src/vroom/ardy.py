@@ -237,6 +237,23 @@ class ArdyBackend:
         fps = float(model.motion_rep.fps)
         budget = self.options.motion_memory_mib * 1024 * 1024
         steps = self.options.steps or int(model.diffusion.num_base_steps)
+        correction = list(targets.correction)
+        if prefix is not None and self.options.postprocess:
+            from ardy.constraints import FullBodyConstraintSet
+
+            rotations, positions, _ = model.skeleton.fk(
+                torch.tensor(prefix.local_rot_mats), torch.tensor(prefix.root_positions)
+            )
+            # Treat the preserved history as authoritative during correction,
+            # so root/foot adjustment cannot shift the suffix away from it.
+            correction.append(
+                FullBodyConstraintSet(
+                    skeleton=model.skeleton,
+                    frame_indices=torch.arange(prefix.frame_count),
+                    global_joints_positions=positions,
+                    global_joints_rots=rotations,
+                )
+            )
         results = []
         for seed in plan.seeds:
             seed_everything(seed)
@@ -265,7 +282,7 @@ class ArdyBackend:
                             output["root_positions"],
                             output["foot_contacts"],
                             model.skeleton,
-                            constraint_lst=list(targets.correction) or None,
+                            constraint_lst=correction or None,
                         )
                     )
                 if prefix is not None:
