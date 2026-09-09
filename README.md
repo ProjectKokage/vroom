@@ -2,10 +2,9 @@
 
 **English** | [日本語](README.ja.md)
 
-HY-Motion 1.0 generates human motion from text. Its output requires humanoid
-bone mappings and a portable file before a VRM application can
-retarget it. `vroom` writes the body rotations and root translation as an
-avatar-independent
+`vroom` generates finished human-motion clips with **ARDY by default**, or
+HY-Motion 1.0 with `--backend hy-motion`. It writes body rotations and root
+translation as an avatar-independent
 [VRM Animation 1.0](https://github.com/vrm-c/vrm-specification/tree/master/specification/VRMC_vrm_animation-1.0)
 (`.vrma`) file.
 
@@ -16,16 +15,16 @@ checks animation files. It does not render or preview them.
 
 | Command | Purpose |
 | --- | --- |
-| `generate` | Generate one VRMA clip from an English motion prompt |
+| `generate` | Generate VRMA clips from an English prompt or an ARDY motion plan |
 | `curate` | Turn sampled LINEAR VRMA into a bounded clip with selected rotations and optional closed root motion |
 | `inspect` | Summarize a VRM or VRMA GLB |
 | `validate` | Validate one or more VRMA files, or every VRMA file in a ZIP archive |
 
 The GLB, VRM, and VRMA code uses the Python standard library and no runtime
 dependencies. The base package runs `curate`, `inspect`, and `validate`. The
-`inference` extra adds Torch and the HY-Motion stack for `generate`. The
-generation path stays inside the Python process, where `vroom` writes the GLB
-data.
+`ardy` extra installs the ARDY stack; `inference` retains the HY-Motion stack.
+Install them in separate environments because their Torch and text-encoder
+dependencies differ. Text encoding and motion inference run locally.
 
 ## Output scope
 
@@ -33,8 +32,8 @@ data.
 | --- | --- |
 | Humanoid hierarchy | Self-contained VRM T-pose nodes for retargeting |
 | Root motion | Local `hips` translation |
-| Body motion | Local quaternion tracks for the 22 joints produced by the released HY-Motion checkpoints |
-| Fingers | Omitted because the released checkpoints do not generate finger rotations |
+| Body motion | ARDY: 24 VRM bone tracks from Core27, including both thumb roots; HY-Motion: 22 body joints |
+| Fingers | ARDY animates thumb roots only; remaining fingers have no generated tracks. HY-Motion has no finger tracks |
 | Face and gaze | No expression or look-at animation |
 
 ## Quick start
@@ -43,9 +42,92 @@ data.
 
 - Python 3.12
 - [`uv`](https://docs.astral.sh/uv/)
-- Bash, Git, and [Git LFS](https://git-lfs.com/)
+- Bash and Git; [Git LFS](https://git-lfs.com/) for HY-Motion setup
+- A C++17 compiler and CMake >= 3.15 for ARDY's native motion-correction build
 
 The commands below assume a Git checkout and a Bash shell.
+
+### Install ARDY and generate
+
+ARDY uses a local LLM2Vec text encoder based on the gated
+[Meta-Llama-3-8B-Instruct model](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct).
+Obtain access on its Hugging Face page, then log in using that account:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-ardy uv sync --extra ardy
+UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy hf auth login
+
+UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy vroom generate \
+  "A person takes three steps forward, waves with the right hand, and stops." \
+  --output output/wave.vrma
+
+uv run vroom validate output/wave.vrma
+```
+
+The ARDY environment installs the pinned upstream runtime, including its
+skeleton assets and native correction extension. First generation downloads
+the pinned Core checkpoint, Llama base model, and LLM2Vec adapters from Hugging
+Face. The 8B text encoder requires substantial memory and disk space; placing
+it on CPU does not remove its memory cost. No remote inference service is used.
+`vroom` does not store prompts in VRMA, optional source NPZ files, or reports.
+
+Defaults are `--model core` (Core40), four seconds, seed `42`, automatic device
+selection, motion correction enabled, and source root motion preserved. Both
+Core40 and `--model core8` run at 20 fps. `--ground` applies a single vertical
+shift to the exported clip; `--no-postprocess` disables ARDY correction.
+
+ARDY code uses [Apache 2.0](https://github.com/nv-tlabs/ardy/blob/main/LICENSE).
+The [Core model card](https://huggingface.co/nvidia/ARDY-Core-RP-20FPS-Horizon40)
+links its NVIDIA Open Model Agreement. The Llama encoder has separate terms
+and access requirements; read the linked upstream terms for the components
+you use. `vroom` packages contain no model weights.
+
+### Author with ARDY
+
+Save reusable source motion and compare several seeds after one model load:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy vroom generate \
+  "A person crouches, stands, and raises both arms." \
+  --duration 3 --seeds 7 11 --device mps \
+  --source-output output/raise-arms.npz \
+  --output output/raise-arms.vrma
+```
+
+Multiple candidates receive seed suffixes, such as `raise-arms-7.vrma` and
+`raise-arms-7.npz`. Use `--plan motion.json` for timed prompt changes, root
+waypoints and headings, reference poses, and joint position/rotation targets.
+`--continue-from source.npz` preserves and extends a prior ARDY source clip.
+`--report report.json` saves measured target errors; `--strict` fails before
+writing outputs if any target misses tolerance.
+
+The [ARDY authoring guide](docs/ardy.md) covers the JSON schema, Python API,
+coordinate conventions, timing, continuation, and constraint limitations.
+
+### ARDY device selection
+
+| Arguments | Behavior |
+| --- | --- |
+| `--device auto` | Chooses CUDA, then MPS, then CPU |
+| `--device mps` | Motion on Apple Silicon MPS; text encoding on CPU |
+| `--device mps --text-device same` | Requests both stages on MPS |
+| `--device cuda:0` | Motion and text encoding on the selected NVIDIA GPU |
+| `--device cpu` | Both stages on CPU |
+
+`--text-device` can explicitly place the encoder on another supported device.
+The encoder is released before motion generation. These are execution paths,
+not performance guarantees; model inference needs separate verification on
+the target machine. The ARDY extra pins Torch 2.8.0, whose Linux x86-64 wheel
+includes CUDA 12.8. No Windows environment is defined by this lock.
+
+For cached-only model loading, set `HF_HUB_OFFLINE=1` after the selected model
+and encoder artifacts have been downloaded. Custom checkpoint directories
+and artifact verification are documented in the [authoring guide](docs/ardy.md).
+
+## Use HY-Motion
+
+HY-Motion remains available through `--backend hy-motion` in its own
+`inference` environment. All options and examples in this section select HY-Motion.
 
 ### Read the HY-Motion license
 
@@ -78,22 +160,22 @@ uv run --extra inference huggingface-cli download \
 Generate and validate a clip:
 
 ```bash
-uv run --extra inference vroom generate \
+uv run --extra inference vroom generate --backend hy-motion \
   "A person takes three steps forward, waves with the right hand, and stops." \
   --output output/wave.vrma
 
 uv run vroom validate output/wave.vrma
 ```
 
-`generate` uses the full checkpoint at its default path, a four-second
+`generate --backend hy-motion` uses the full checkpoint at its default path, a four-second
 duration, seed `42`, and device auto-selection. The command creates the output
 directory when needed. Unless both text encoders exist in the HY-Motion
 checkout, the first generation downloads Qwen3-8B and CLIP-L from
 Hugging Face and places them in the Hugging Face cache.
 
-## Installation and model paths
+### HY-Motion installation and model paths
 
-### Lite motion checkpoint
+#### Lite motion checkpoint
 
 The Lite model uses the same download command as the full model. Replace
 `HY-Motion-1.0/*` with `HY-Motion-1.0-Lite/*`. Inference with either model
@@ -101,7 +183,7 @@ needs substantial memory; the
 [upstream model table](https://github.com/Tencent-Hunyuan/HY-Motion-1.0#-model-zoo)
 lists hardware guidance for both checkpoints.
 
-### Wheel installation
+#### Wheel installation
 
 A wheel contains `vroom`, but not the HY-Motion runtime. Install the wheel with
 the `inference` extra:
@@ -123,7 +205,7 @@ export HY_MOTION_MODEL_PATH=/absolute/path/to/HY-Motion-1.0/ckpts/tencent/HY-Mot
 You can pass the same locations to one command with `--hy-motion-root` and
 `--model-path`.
 
-### Local text encoders
+#### Local text encoders
 
 `--text-models auto` uses local Qwen3-8B and CLIP-L directories when both
 exist. If either directory is missing, HY-Motion downloads the encoders from
@@ -153,7 +235,7 @@ inference if either one is missing. Git ignores downloaded model weights. The
 `inference` extra includes Hugging Face's Xet transfer helper for large weight
 shards.
 
-## Generate a motion
+### Generate a HY-Motion clip
 
 The selected checkpoint controls the accepted duration range. The released
 checkpoints accept about 0.667 to 12 seconds and produce 30 fps motion.
@@ -167,7 +249,7 @@ words, and a motion shorter than five seconds.
 Use explicit options when you need repeatable output or a fixed device:
 
 ```bash
-uv run --extra inference vroom generate \
+uv run --extra inference vroom generate --backend hy-motion \
   "A person crouches, stands, and raises both arms." \
   --duration 3 \
   --seed 7 \
@@ -175,7 +257,7 @@ uv run --extra inference vroom generate \
   --output output/raise-arms.vrma
 ```
 
-Run `uv run --extra inference vroom generate --help` for the complete option
+Run `uv run --extra inference vroom generate --backend hy-motion --help` for the complete option
 list, including CFG scale, ODE inference steps, text-encoder placement, model
 paths, and ground alignment.
 
@@ -184,7 +266,7 @@ Python callers that need several deterministic variants of one prompt can use
 a prompt batch with at most 16 entries, and generates every seed after one
 model load. `generate` provides the single-seed API.
 
-### Device selection
+#### HY-Motion device selection
 
 | Target | Arguments | Behavior |
 | --- | --- | --- |
@@ -417,7 +499,17 @@ uv run ruff check src tests
 uv run pytest
 ```
 
-After you download the models, run the opt-in inference smoke tests:
+The opt-in ARDY CPU contract checks use the real runtime and Core skeleton,
+with synthetic statistics and no model weights or inference. Point `ARDY_ROOT`
+at the pinned upstream checkout:
+
+```bash
+VROOM_TEST_ARDY_RUNTIME=1 ARDY_ROOT=/absolute/path/to/ardy \
+  UV_PROJECT_ENVIRONMENT=.venv-ardy uv run --extra ardy \
+  pytest tests/test_ardy_conditioning_integration.py
+```
+
+After you download the HY-Motion models, run its opt-in inference smoke tests:
 
 ```bash
 HY_MOTION_MODEL_PATH=vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0 \

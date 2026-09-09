@@ -1,0 +1,106 @@
+{
+  "core40": {
+    "repo_id": "nvidia/ARDY-Core-RP-20FPS-Horizon40",
+    "revision": "abe6c43beb28c867c950acb824b9c4ef3d63fb76",
+    "files": [
+      {
+        "path": "config.yaml",
+        "size_bytes": 1560,
+        "sha256": "d8999e5c1f045a91f706fb2d5c9f2eea530af5560c1bc859d0d6257394eadd7e"
+      },
+      {
+        "path": "denoiser.safetensors",
+        "size_bytes": 623324336,
+        "sha256": "1019d0bf269cf8d1b3e3e9b4a384a58c112672959b071279ddb65814d77660cd"
+      },
+      {
+        "path": "stats/motion/mean.npy",
+        "size_bytes": 2800,
+        "sha256": "f04fd87f7b9ce3eab87159e3d4c408261d33e050ce98747de84ea76b0d18538b"
+      },
+      {
+        "path": "stats/motion/std.npy",
+        "size_bytes": 2800,
+        "sha256": "0da45d27a9b9f12d66eb5627c7d3920aef09863c4a931bc7fc44522bdbfe957a"
+      },
+      {
+        "path": "stats/post_quantization/mean.npy",
+        "size_bytes": 640,
+        "sha256": "408066cdfacd021a424ee2eb9dfc9501bfaf0b3136845864588e492148ac9923"
+      },
+      {
+        "path": "stats/post_quantization/std.npy",
+        "size_bytes": 640,
+        "sha256": "18786104a1aac8ef0998545afad51ab7e14fc73bddd0c3c736d2ba03342493ea"
+      },
+      {
+        "path": "stats/pre_quantization/mean.npy",
+        "size_bytes": 640,
+        "sha256": "e39c8c10cb32070d4dcdeffbc0161831bdced94bcebbecf49650534d0d8e6d7d"
+      },
+      {
+        "path": "stats/pre_quantization/std.npy",
+        "size_bytes": 640,
+        "sha256": "88201690e1d25c97b16a003387e4c2d7bf98b09528b4a3aa6ad460adfb32500e"
+      },
+      {
+        "path": "tokenizer.safetensors",
+        "size_bytes": 141746112,
+        "sha256": "58a887e299a3a6779b5b4ff361b452c4349d45b513b5957f2a961d393623abcd"
+      }
+    ],
+    "total_size_bytes": 765104997
+  },
+  "core8": {
+    "repo_id": "nvidia/ARDY-Core-RP-20FPS-Horizon8",
+    "revision": "257a0843a10bf5201065963d7bca2791e9393a7a",
+    "files": [
+      {
+        "path": "config.yaml",
+        "size_bytes": 1559,
+        "sha256": "2b4ffc00c24e40aaa0a9d9747c929914f8f821a4315ce31453df40a60131d93a"
+      },
+      {
+        "path": "denoiser.safetensors",
+        "size_bytes": 623324336,
+        "sha256": "7c309b6026bf9440f2fbf83194b6040f2ffb6cd3a1d63b0b61557b27a4248614"
+      },
+      {
+        "path": "stats/motion/mean.npy",
+        "size_bytes": 2800,
+        "sha256": "f04fd87f7b9ce3eab87159e3d4c408261d33e050ce98747de84ea76b0d18538b"
+      },
+      {
+        "path": "stats/motion/std.npy",
+        "size_bytes": 2800,
+        "sha256": "0da45d27a9b9f12d66eb5627c7d3920aef09863c4a931bc7fc44522bdbfe957a"
+      },
+      {
+        "path": "stats/post_quantization/mean.npy",
+        "size_bytes": 640,
+        "sha256": "408066cdfacd021a424ee2eb9dfc9501bfaf0b3136845864588e492148ac9923"
+      },
+      {
+        "path": "stats/post_quantization/std.npy",
+        "size_bytes": 640,
+        "sha256": "18786104a1aac8ef0998545afad51ab7e14fc73bddd0c3c736d2ba03342493ea"
+      },
+      {
+        "path": "stats/pre_quantization/mean.npy",
+        "size_bytes": 640,
+        "sha256": "e39c8c10cb32070d4dcdeffbc0161831bdced94bcebbecf49650534d0d8e6d7d"
+      },
+      {
+        "path": "stats/pre_quantization/std.npy",
+        "size_bytes": 640,
+        "sha256": "88201690e1d25c97b16a003387e4c2d7bf98b09528b4a3aa6ad460adfb32500e"
+      },
+      {
+        "path": "tokenizer.safetensors",
+        "size_bytes": 141746112,
+        "sha256": "58a887e299a3a6779b5b4ff361b452c4349d45b513b5957f2a961d393623abcd"
+      }
+    ],
+    "total_size_bytes": 765104993
+  }
+}

@@ -1,12 +1,19 @@
 [project]
 name = "vroom"
 version = "0.1.0"
-description = "Generate VRM Animation files from text with HY-Motion 1.0"
+description = "Generate VRM Animation files with ARDY and HY-Motion"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = []
 
 [project.optional-dependencies]
+ardy = [
+    "ardy @ git+https://github.com/nv-tlabs/ardy.git@693f74d13b3d04a0a22ce127ee79c929dd89756b",
+    # PEFT imports clear_device_cache, absent from HY-Motion's accelerate pin.
+    "accelerate>=1.0",
+    # The Linux wheel includes CUDA 12.8 for Blackwell GPUs such as RTX 5090.
+    "torch==2.8.0",
+]
 inference = [
     "accelerate==0.30.1",
     "einops==0.8.1",
@@ -27,6 +34,7 @@ vroom = "vroom.cli:main"
 [dependency-groups]
 dev = [
     "hatchling>=1.27,<2",
+    "numpy>=1.24,<2",
     "pytest>=8.3,<9",
     "ruff>=0.9,<1",
 ]
@@ -35,10 +43,20 @@ dev = [
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# The upstream inference stacks require incompatible text-encoder versions.
+conflicts = [
+    [{ extra = "ardy" }, { extra = "inference" }],
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/README.md",
     "/README.ja.md",
+    "/docs",
     "/pyproject.toml",
     "/src/vroom",
 ]
@@ -50,7 +68,7 @@ packages = ["src/vroom"]
 addopts = "-ra"
 testpaths = ["tests"]
 markers = [
-    "integration: requires downloaded HY-Motion and text-encoder checkpoints",
+    "integration: requires an explicitly enabled native runtime or downloaded checkpoints",
 ]
 
 [tool.ruff]

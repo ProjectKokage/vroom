@@ -21,5 +21,9 @@ class HyMotionError(VroomError):
     """HY-Motion could not be configured or executed."""
 
 
+class ArdyError(VroomError):
+    """ARDY input, configuration, or generation failed."""
+
+
 class DeviceError(HyMotionError):
     """The requested inference device is unavailable."""

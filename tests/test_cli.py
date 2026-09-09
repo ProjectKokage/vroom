@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 
 from vroom.cli import _build_parser, main
 from vroom.glb import Glb
@@ -31,6 +30,8 @@ def test_generate_reports_missing_checkpoint(tmp_path, capsys) -> None:
     code = main(
         [
             "generate",
+            "--backend",
+            "hy-motion",
             "a person waves",
             "--model-path",
             str(tmp_path),
@@ -43,12 +44,14 @@ def test_generate_reports_missing_checkpoint(tmp_path, capsys) -> None:
     assert "missing HY-Motion runtime files" in capsys.readouterr().err
 
 
-def test_generate_defaults_to_full_checkpoint(monkeypatch) -> None:
+def test_generate_defaults_to_ardy_core(monkeypatch) -> None:
     monkeypatch.delenv("HY_MOTION_MODEL_PATH", raising=False)
 
     args = _build_parser().parse_args(["generate", "a person waves", "--output", "wave.vrma"])
 
-    assert args.model_path == Path("vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0")
+    assert args.backend == "ardy"
+    assert args.model == "core"
+    assert args.model_path is None
 
 
 def test_inspect_reports_malformed_animation_cleanly(

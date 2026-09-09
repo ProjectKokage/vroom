@@ -10,10 +10,13 @@ wheels/
 
 # Virtual environments
 .venv/
+.venv-ardy/
 
 # Generated motion and downloaded model weights
 output/
+outputs/
 *.vrma
+*.npz
 vendor/HY-Motion-1.0/ckpts/tencent/
 vendor/HY-Motion-1.0/ckpts/Qwen3-8B/
 vendor/HY-Motion-1.0/ckpts/clip-vit-large-patch14/

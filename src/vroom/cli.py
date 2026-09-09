@@ -8,8 +8,12 @@ import os
 import sys
 import zipfile
 from collections.abc import Sequence
+from dataclasses import asdict, replace
 from pathlib import Path
 
+from .ardy import ArdyBackend, ArdyOptions
+from .ardy_plan import ArdyPlan, PromptCue, load_plan
+from .ardy_source import write_source
 from .curation import (
     HIPS_TRANSLATION_MODES,
     MAX_ROTATION_GAIN,
@@ -18,10 +22,10 @@ from .curation import (
     HipsTranslationPolicy,
     write_curated_vrma,
 )
-from .errors import VrmaError, VroomError
+from .errors import ArdyError, VrmaError, VroomError
 from .glb import Glb
 from .hy_motion import HyMotionBackend, HyMotionOptions, find_hy_motion_root
-from .motion import load_hy_motion_skeleton
+from .motion import MotionClip, load_hy_motion_skeleton
 from .vrm import VrmAvatar
 from .vrma import VRMA_EXTENSION, build_vrma, read_vrma, validate_vrma
 
@@ -29,22 +33,47 @@ from .vrma import VRMA_EXTENSION, build_vrma, read_vrma, validate_vrma
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vroom",
-        description="Generate portable VRM Animation (.vrma) files with HY-Motion 1.0.",
+        description="Generate portable VRM Animation (.vrma) with ARDY or HY-Motion.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     generate = subparsers.add_parser("generate", help="generate one VRMA clip from text")
-    generate.add_argument("prompt", help="English description of the desired human motion")
+    generate.add_argument("prompt", nargs="?", help="English description of the desired motion")
+    generate.add_argument("--backend", choices=("ardy", "hy-motion"), default="ardy")
+    generate.add_argument("--plan", type=Path, help="ARDY JSON motion plan")
+    generate.add_argument("--model", default="core", help="ARDY Core checkpoint: core40 or core8")
+    generate.add_argument("--checkpoints-dir", type=Path, help="local ARDY checkpoint directories")
+    generate.add_argument(
+        "--continue-from", type=Path, help="preserve and extend an ARDY source NPZ"
+    )
+    generate.add_argument(
+        "--source-output", type=Path, help="save reusable ARDY source motion as NPZ"
+    )
+    generate.add_argument("--report", type=Path, help="save ARDY constraint measurements as JSON")
+    generate.add_argument(
+        "--strict", action="store_true", help="fail on missed ARDY target tolerances"
+    )
+    generate.add_argument("--seeds", type=int, nargs="+", help="generate one candidate per seed")
+    generate.add_argument(
+        "--steps", type=int, help="ARDY denoising steps within checkpoint schedule"
+    )
+    generate.add_argument("--constraint-cfg-scale", type=float, default=2.0)
+    generate.add_argument(
+        "--no-postprocess", action="store_true", help="disable ARDY motion correction"
+    )
+    generate.add_argument(
+        "--ground", action="store_true", help="ground ARDY export using source joints"
+    )
+    generate.add_argument(
+        "--motion-memory-mib",
+        type=int,
+        default=256,
+        help="ARDY working-data budget, excluding model weights (default: 256)",
+    )
     generate.add_argument("-o", "--output", type=Path, required=True, help="output .vrma path")
     generate.add_argument(
         "--model-path",
         type=Path,
-        default=Path(
-            os.environ.get(
-                "HY_MOTION_MODEL_PATH",
-                "vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0",
-            )
-        ),
         help="directory containing HY-Motion config.yml and latest.ckpt",
     )
     generate.add_argument(
@@ -52,8 +81,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="HY-Motion submodule root (or set VROOM_HY_MOTION_ROOT)",
     )
-    generate.add_argument("--duration", type=float, default=4.0, help="duration in seconds")
-    generate.add_argument("--seed", type=int, default=42, help="random seed")
+    generate.add_argument("--duration", type=float, help="duration in seconds (default: 4)")
+    generate.add_argument("--seed", type=int, help="random seed (default: 42)")
     generate.add_argument(
         "--device",
         default="auto",
@@ -70,7 +99,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="where Qwen and CLIP weights are loaded from",
     )
-    generate.add_argument("--cfg-scale", type=float, default=5.0, help="classifier-free guidance")
+    generate.add_argument("--cfg-scale", type=float, help="text guidance (ARDY: 2; HY-Motion: 5)")
     generate.add_argument(
         "--validation-steps",
         type=int,
@@ -164,30 +193,175 @@ def _build_parser() -> argparse.ArgumentParser:
 def _generate(args: argparse.Namespace) -> int:
     if args.output.suffix.lower() != ".vrma":
         raise VrmaError("output path must end in .vrma")
+    if args.backend == "ardy":
+        return _generate_ardy(args)
+    if (
+        args.plan
+        or args.continue_from
+        or args.source_output
+        or args.report
+        or args.strict
+        or args.checkpoints_dir
+        or args.steps is not None
+        or args.no_postprocess
+        or args.ground
+        or args.model != "core"
+        or args.constraint_cfg_scale != 2.0
+        or args.motion_memory_mib != 256
+    ):
+        raise ArdyError("ARDY authoring options require --backend ardy")
+    if not args.prompt:
+        raise VrmaError("HY-Motion generation requires a prompt")
+    if args.seed is not None and args.seeds is not None:
+        raise VrmaError("choose --seed or --seeds")
     hy_root = find_hy_motion_root(args.hy_motion_root)
     options = HyMotionOptions(
-        model_path=args.model_path,
+        model_path=args.model_path
+        or Path(
+            os.environ.get(
+                "HY_MOTION_MODEL_PATH", "vendor/HY-Motion-1.0/ckpts/tencent/HY-Motion-1.0"
+            )
+        ),
         hy_motion_root=hy_root,
         device=args.device,
         text_device=args.text_device,
         text_models=args.text_models,
-        cfg_scale=args.cfg_scale,
+        cfg_scale=5.0 if args.cfg_scale is None else args.cfg_scale,
         validation_steps=args.validation_steps,
         ground=not args.no_ground,
     )
-    clip = HyMotionBackend(options).generate(
+    clips = HyMotionBackend(options).generate_variants(
         args.prompt,
-        duration=args.duration,
-        seed=args.seed,
+        duration=4.0 if args.duration is None else args.duration,
+        seeds=args.seeds or (42 if args.seed is None else args.seed,),
     )
     skeleton = load_hy_motion_skeleton(hy_root)
-    glb = build_vrma(clip, skeleton)
-    report = validate_vrma(glb)
-    report.require_valid()
-    glb.write(args.output)
-    print(
-        f"Wrote {args.output} ({clip.frame_count} frames, {clip.duration:.3f}s at {clip.fps:g} fps)"
+    seeds = args.seeds or (42 if args.seed is None else args.seed,)
+    for clip, seed in zip(clips, seeds, strict=True):
+        output = _candidate_path(args.output, seed, len(clips))
+        glb = build_vrma(clip, skeleton)
+        validate_vrma(glb).require_valid()
+        glb.write(output)
+        _print_written(output, clip)
+    return 0
+
+
+def _candidate_path(path: Path, seed: int, count: int) -> Path:
+    return path if count == 1 else path.with_name(f"{path.stem}-{seed}{path.suffix}")
+
+
+def _print_written(path: Path, clip: MotionClip) -> None:
+    print(f"Wrote {path} ({clip.frame_count} frames, {clip.duration:.3f}s at {clip.fps:g} fps)")
+
+
+def _generate_ardy(args: argparse.Namespace) -> int:
+    if args.model_path or args.hy_motion_root or args.validation_steps is not None:
+        raise ArdyError("HY-Motion checkpoint/ODE options require --backend hy-motion")
+    if args.text_models != "auto":
+        raise ArdyError(
+            "ARDY uses its local Llama encoder; use HF_HUB_OFFLINE=1 for cached-only loading"
+        )
+    if args.ground and args.no_ground:
+        raise ArdyError("choose --ground or --no-ground")
+    if args.plan:
+        if (
+            args.prompt is not None
+            or args.duration is not None
+            or args.seed is not None
+            or args.seeds is not None
+            or args.continue_from is not None
+        ):
+            raise ArdyError("put prompt, duration, seeds, and continuation in the motion plan")
+        plan = load_plan(args.plan)
+        if args.strict:
+            plan = replace(plan, strict=True)
+    else:
+        if not args.prompt:
+            raise ArdyError("provide a motion prompt or --plan")
+        if args.seed is not None and args.seeds is not None:
+            raise ArdyError("choose --seed or --seeds")
+        plan = ArdyPlan(
+            4.0 if args.duration is None else args.duration,
+            (PromptCue(0, args.prompt),),
+            seeds=tuple(args.seeds or (42 if args.seed is None else args.seed,)),
+            continuation=args.continue_from,
+            strict=args.strict,
+        )
+    if args.source_output and args.source_output.suffix.lower() != ".npz":
+        raise ArdyError("source output must use the .npz extension")
+    outputs = [_candidate_path(args.output, seed, len(plan.seeds)) for seed in plan.seeds]
+    if args.source_output:
+        outputs.extend(
+            _candidate_path(args.source_output, seed, len(plan.seeds)) for seed in plan.seeds
+        )
+    if args.report:
+        outputs.append(args.report)
+    inputs = [value for value in (args.plan, plan.continuation) if value is not None]
+    inputs.extend(target.source for target in plan.constraints if hasattr(target, "source"))
+    resolved = [path.resolve() for path in outputs]
+    if len(set(resolved)) != len(resolved) or set(resolved) & {path.resolve() for path in inputs}:
+        raise ArdyError("output paths must be distinct and must not overwrite plan/source inputs")
+    options = ArdyOptions(
+        model=args.model,
+        checkpoints_dir=args.checkpoints_dir,
+        device=args.device,
+        text_device=args.text_device,
+        cfg_scale=2.0 if args.cfg_scale is None else args.cfg_scale,
+        constraint_cfg_scale=args.constraint_cfg_scale,
+        steps=args.steps,
+        postprocess=not args.no_postprocess,
+        ground=args.ground,
+        motion_memory_mib=args.motion_memory_mib,
     )
+    results = ArdyBackend(options).generate_plan(plan)
+    documents = [build_vrma(result.clip, result.skeleton) for result in results]
+    for document in documents:
+        validate_vrma(document).require_valid()
+    for result, document in zip(results, documents, strict=True):
+        path = _candidate_path(args.output, result.seed, len(results))
+        document.write(path)
+        _print_written(path, result.clip)
+        if args.source_output:
+            write_source(
+                _candidate_path(args.source_output, result.seed, len(results)),
+                result.source,
+                model=args.model,
+                max_bytes=args.motion_memory_mib * 1024 * 1024,
+            )
+        if result.deviations:
+            failed = [item for item in result.deviations if not item.satisfied]
+            print(
+                f"Seed {result.seed}: {len(failed)} of {len(result.deviations)} "
+                "constraint measurements exceed tolerance"
+            )
+            for item in failed:
+                joint = "" if item.joint is None else f" {item.joint}"
+                print(
+                    f"  target {item.target} at {item.time:g}s{joint} {item.component}: "
+                    f"{item.error:.5g} (tolerance {item.tolerance:.5g})"
+                )
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(
+            json.dumps(
+                {
+                    "coordinateSpace": (
+                        "ARDY Core source, before optional export grounding and avatar retargeting"
+                    ),
+                    "candidates": [
+                        {
+                            "seed": result.seed,
+                            "measurements": [asdict(item) for item in result.deviations],
+                        }
+                        for result in results
+                    ],
+                },
+                indent=2,
+                allow_nan=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 
@@ -350,8 +524,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(args)
         if args.command == "inspect":
             return _inspect(args)
-    except VroomError as exc:
+    except (VroomError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("cancelled", file=sys.stderr)
+        return 130
     parser.error(f"unknown command {args.command!r}")
     return 2

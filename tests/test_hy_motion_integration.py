@@ -26,6 +26,8 @@ def test_real_text_to_vrma_when_configured(tmp_path: Path) -> None:
     code = main(
         [
             "generate",
+            "--backend",
+            "hy-motion",
             "a person raises one hand",
             "--model-path",
             str(model_path),
