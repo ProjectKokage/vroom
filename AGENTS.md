@@ -58,6 +58,10 @@ and `git diff --check`; no inference environment is needed.
 
 ## Delivery
 
+Branch names must not begin with `codex` (case-insensitive), including
+`codex/` and `codex-`. Rename tool-generated defaults before committing or
+pushing; use a descriptive name such as `docs-agent-guides`.
+
 Use a task branch, keep diffs focused and review them before handoff. Commit
 only task files; push, merge or publish only when authorized. Continue routine
 implementation within scope and get approval before changing product or asset
